@@ -1,19 +1,20 @@
 package com.wxy.wala.test;
 
 public class StaticDataflow {
-    static int f;
 
-    static int g;
+    private int f;
 
-    public static void test1() {
+    private int g;
+
+    private void test1() {
         f = 3;
-        f = 3;
+        g = 3;
     }
 
-    public static void test2() {
+    private void test2(int i) {
         f = 4;
         g = 3;
-        if (f == 5) {
+        if (i == 5) {
             g = 2;
         } else {
             g = 7;
@@ -21,22 +22,19 @@ public class StaticDataflow {
     }
 
     public static void main(String[] args) {
-        testInterproc();
+        StaticDataflow s = new StaticDataflow();
+        s.testInterproc();
     }
 
-    private static void testInterproc() {
-        int a = 5;
-        f = 3;
-        m();
-        for (int i = 0; i < f + a; i++) {
-            g = 4;
-            m();
-        }
-
+    private void testInterproc() {
+        f = m();
+        test1();
+        g = 4;
+        test2(5);
     }
 
-    private static void m() {
-        f = 2;
+    private int m() {
+        int i = 3;
+        return i;
     }
 }
-

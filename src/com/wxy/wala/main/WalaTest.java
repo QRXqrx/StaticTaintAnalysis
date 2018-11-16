@@ -2,7 +2,6 @@ package com.wxy.wala.main;
 
 import com.ibm.wala.classLoader.IClass;
 import com.ibm.wala.classLoader.IMethod;
-import com.ibm.wala.classLoader.Language;
 import com.ibm.wala.ipa.callgraph.*;
 import com.ibm.wala.ipa.callgraph.impl.Util;
 import com.ibm.wala.ipa.cha.ClassHierarchy;
@@ -18,7 +17,6 @@ import com.ibm.wala.types.TypeReference;
 import com.ibm.wala.util.config.AnalysisScopeReader;
 import com.ibm.wala.util.io.FileProvider;
 
-import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -28,27 +26,27 @@ import java.util.logging.Logger;
 
 public class WalaTest {
 
-    public String scopeFile;
-    public String exclusion;
-    public String mainClass;
+    private String scopeFile;
+    private String exclusion;
+    private String mainClass;
 
     private Logger logger = Logger.getLogger(WalaTest.class.getName());
-    private ClassHierarchy cha;
-    private AnalysisScope scope;
 
     public WalaTest() {
-        scopeFile = "setting/myscope";
+        scopeFile = "setting/scope.txt";
         exclusion = "setting/Exclusion.txt";
         mainClass = "Lcom/wxy/wala/test/StaticDataflow";
     }
 
+    private ClassHierarchy cha;
+    private AnalysisScope scope;
+
     public void ReadScope() {
         try {
-            File exFile = new FileProvider().getFile(exclusion);
             scope = AnalysisScopeReader.readJavaScope(scopeFile,
-                    exFile,
+                    (new FileProvider()).getFile(exclusion),
                     WalaTest.class.getClassLoader());
-            cha = ClassHierarchyFactory.make(scope); // *解析类名，方法名等
+            cha = ClassHierarchyFactory.make(scope);
         } catch (IOException e) {
             e.printStackTrace();
         } catch (ClassHierarchyException e) {
@@ -56,6 +54,19 @@ public class WalaTest {
         }
     }
 
+    // 打印类名以及函数签名
+    public void PrintInfo() {
+        for (IClass c : cha) {
+            if (scope.isApplicationLoader(c.getClassLoader())) {
+                System.out.println(c.getName().toString());
+                for (IMethod m : c.getAllMethods()) {
+                    System.out.println("-- " + m.getSignature());
+                }
+            }
+        }
+    }
+
+    // 检查是否有mainClass
     public boolean HasMainClass() {
         boolean flag = true;
         TypeReference ref = TypeReference.findOrCreate(ClassLoaderReference.Application,
@@ -66,28 +77,20 @@ public class WalaTest {
         return flag;
     }
 
-    public void PrintInfo() {
-        for (IClass klass : cha) {
-            if (scope.isApplicationLoader(klass.getClassLoader())) {  // *application记录在scope文件中
-                System.out.println(klass.toString());
-                for (IMethod method : klass.getAllMethods()) {
-                    System.out.println("-- " + method.getSignature());
-                }
-            }
-        }
-    }
-
     private IAnalysisCacheView cache;
     private CallGraph cg;
     private CGNode entry;
 
+    // 构建CG图
     public void BuildCG() {
         Iterable<Entrypoint> e = Util.makeMainEntrypoints(scope, cha, mainClass);
-        AnalysisOptions o = new AnalysisOptions(scope, e);
+
+        AnalysisOptions o = new AnalysisOptions();
+        o.setEntrypoints(e);
         o.setReflectionOptions(AnalysisOptions.ReflectionOptions.NONE);
 
         cache = new AnalysisCacheImpl();
-        CallGraphBuilder builder = Util.makeZeroOneCFABuilder(Language.JAVA, o, cache, cha, scope);
+        CallGraphBuilder builder = Util.makeZeroOneContainerCFABuilder(o, cache, cha, scope);
 
         try {
             cg = builder.makeCallGraph(o, null);
@@ -96,9 +99,13 @@ public class WalaTest {
         }
     }
 
+    public void PrintCG() {
+        System.out.println(cg.toString());
+    }
+
+    private MethodReference ref;
     private SSACFG cfg;
-    private MethodReference mref;
-    private ISSABasicBlock basicBlock;
+    private ISSABasicBlock bbk;
 
     public void SetEntry() {
         for (CGNode i : cg.getEntrypointNodes()) {
@@ -106,21 +113,21 @@ public class WalaTest {
                 entry = i;
                 break;
             }
-        } // *获得cg图的根节点
+        } // 获取CG图的入口节点
+        ref = entry.getMethod().getReference();
         cfg = entry.getIR().getControlFlowGraph();
-        mref = entry.getMethod().getReference();
-        basicBlock = cfg.entry();
+        bbk = cfg.entry();
         //DefUse defUse = cache.getDefUse(entry.getIR());
     }
 
     private Map<MethodReference, HashSet<Integer>> flag = new HashMap<>();
 
-    private void dfs(SSACFG cfg, MethodReference ref, ISSABasicBlock bbk) {
-        // 判断是否访问过
-        // visit
+    private void dfs(MethodReference ref, SSACFG cfg, ISSABasicBlock bbk) {
         int ind = cfg.getNumber(bbk);
+
+        // 标记已经遍历的基本块
         if (flag.get(ref) == null) {
-            HashSet<Integer> h = new HashSet<Integer>();
+            HashSet<Integer> h = new HashSet<>();
             h.add(ind);
             flag.put(ref, h);
         } else if (!flag.get(ref).contains(ind)) {
@@ -130,35 +137,36 @@ public class WalaTest {
         }
 
         for (SSAInstruction i : ((SSACFG.BasicBlock) bbk).getAllInstructions()) {
-            System.out.println(i.iindex + " " + i.toString());
+            System.out.println(String.format("[%d] %s", i.iindex, i.toString()));
             if (i instanceof SSAInvokeInstruction) {
-                SSAInvokeInstruction cal = (SSAInvokeInstruction) i;
-                IMethod mnext = cha.resolveMethod(cal.getDeclaredTarget());
-                MethodReference nref = mnext.getReference();
-                SSACFG ncfg = cache.getIR(mnext).getControlFlowGraph();
-                System.out.println(mref.toString());
-                dfs(ncfg, nref, ncfg.entry());
+                SSAInvokeInstruction call = (SSAInvokeInstruction) i;
+                System.out.println(call.getNumberOfReturnValues() + " " + call.getNumberOfPositionalParameters());
+                IMethod nmethod = cha.resolveMethod(call.getDeclaredTarget());
+                MethodReference nref = nmethod.getReference();
+                SSACFG ncfg = cache.getIR(nmethod).getControlFlowGraph();
+                //System.out.println(nref.toString());
+                dfs(nref, ncfg, ncfg.entry());
             }
         }
 
         Iterator<ISSABasicBlock> bnext = cfg.getSuccNodes(bbk);
-
         while (bnext.hasNext()) {
-            dfs(cfg, ref, bnext.next());
+            dfs(ref, cfg, bnext.next());
         }
     }
 
     public void StartDFS() {
-        System.out.println(mref.toString());
-        dfs(cfg, mref, basicBlock);
+        //System.out.println(ref.toString());
+        dfs(ref, cfg, bbk);
     }
 
     public static void main(String[] args) {
         WalaTest w = new WalaTest();
         w.ReadScope();
         w.BuildCG();
+//        w.PrintCG();
         w.SetEntry();
         w.StartDFS();
-        //w.PrintInfo();
+//        w.PrintInfo();
     }
 }
