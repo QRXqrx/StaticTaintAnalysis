@@ -118,6 +118,7 @@ public class WalaTest {
         cfg = entry.getIR().getControlFlowGraph();
         bbk = cfg.entry();
         //DefUse defUse = cache.getDefUse(entry.getIR());
+
     }
 
     private Map<MethodReference, HashSet<Integer>> flag = new HashMap<>();
@@ -126,21 +127,25 @@ public class WalaTest {
         int ind = cfg.getNumber(bbk);
 
         // 标记已经遍历的基本块
-        if (flag.get(ref) == null) {
-            HashSet<Integer> h = new HashSet<>();
-            h.add(ind);
-            flag.put(ref, h);
-        } else if (!flag.get(ref).contains(ind)) {
-            flag.get(ref).add(ind);
-        } else {
+        // if (flag.get(ref) == null) {
+        //     HashSet<Integer> h = new HashSet<>();
+        //     h.add(ind);
+        //     flag.put(ref, h);
+        // } else if (!flag.get(ref).contains(ind)) {
+        //     flag.get(ref).add(ind);
+        // } else {
+        //     return;
+        // }
+
+        if (ref.getSignature().startsWith("java")) {
+            System.out.println(ref.getSignature());
             return;
         }
-
         for (SSAInstruction i : ((SSACFG.BasicBlock) bbk).getAllInstructions()) {
             System.out.println(String.format("[%d] %s", i.iindex, i.toString()));
             if (i instanceof SSAInvokeInstruction) {
                 SSAInvokeInstruction call = (SSAInvokeInstruction) i;
-                System.out.println(call.getNumberOfReturnValues() + " " + call.getNumberOfPositionalParameters());
+                //System.out.println(call.getNumberOfReturnValues() + " " + call.getNumberOfPositionalParameters());
                 IMethod nmethod = cha.resolveMethod(call.getDeclaredTarget());
                 MethodReference nref = nmethod.getReference();
                 SSACFG ncfg = cache.getIR(nmethod).getControlFlowGraph();

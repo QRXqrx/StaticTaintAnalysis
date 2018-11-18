@@ -1,40 +1,29 @@
 package com.wxy.wala.test;
 
 public class StaticDataflow {
-
-    private int f;
-
-    private int g;
-
-    private void test1() {
-        f = 3;
-        g = 3;
+    private static int setx() {
+        return 10;
     }
 
-    private void test2(int i) {
-        f = 4;
-        g = 3;
-        if (i == 5) {
-            g = 2;
-        } else {
-            g = 7;
-        }
+    private static int sety() {
+        return 5;
     }
 
     public static void main(String[] args) {
-        StaticDataflow s = new StaticDataflow();
-        s.testInterproc();
-    }
-
-    private void testInterproc() {
-        f = m();
-        test1();
-        g = 4;
-        test2(5);
-    }
-
-    private int m() {
-        int i = 3;
-        return i;
+        int i = setx();
+        int j = sety();
+        int x = 0;
+        if (i == 10) {
+            x = j - i;
+        } else {
+            x = i + j;
+        }
+        int y = 0;
+        if (j == 5) {
+            y = j - 2 * i;
+        } else {
+            y = i + 2 * j;
+        }
+        System.out.println(x + y);
     }
 }
