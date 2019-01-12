@@ -229,7 +229,14 @@ public class WalaTest {
                 // def(0)是赋值对象 use(0)是field来源的寄存器
             } else if (i instanceof SSABinaryOpInstruction) {
                 SSABinaryOpInstruction iop = (SSABinaryOpInstruction) i;
-                System.out.println("OP " + iop.getDef() + " " + iop.getUse(0) + " " + iop.getUse(1));
+                for (int k = 0; k < iop.getNumberOfUses(); k++) {
+                    if (cursdata.reg.contains(iop.getUse(k))) {
+                        cursdata.reg.add(iop.getDef(0));
+                        break;
+                    }
+                }
+                // 只要有一个操作符被污染，整个函数就被污染
+                //System.out.println("OP " + iop.getDef() + " " + iop.getUse(0) + " " + iop.getUse(1));
             } // 还要处理phi
         }
         nextStep(stnode, stbbk, istk);
