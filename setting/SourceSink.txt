@@ -1,2 +1,3 @@
-SOURCE java.lang.System.getProperty(Ljava/lang/String;)Ljava/lang/String
-SINK java.io.PrintStream.println(java.lang.String)V
+MAIN Lcom/wxy/wala/test/Main
+SOURCE java.lang.System.getProperty(Ljava/lang/String;)Ljava/lang/String;
+SINK java.io.PrintStream.println(Ljava/lang/String;)V

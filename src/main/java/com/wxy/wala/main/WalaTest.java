@@ -18,22 +18,23 @@ import java.io.File;
 import java.io.IOException;
 import java.util.Iterator;
 import java.util.Stack;
+import java.util.Vector;
 
 public class WalaTest {
 
     private String scopeFile;
     private String exclusion;
     private String settingFile;
-    private String mainClass; // 需要指定程序入口 因为每个类都可能都main函数
+    private String mainClass;
     private Config config;
-    //private Logger logger = Logger.getLogger(WalaTest.class.getName());
 
     public WalaTest() {
         scopeFile = "setting/scope.txt";
         exclusion = "setting/Exclusion.txt";
         settingFile = "setting/SourceSink.txt";
-        mainClass = "Lcom/wxy/wala/test/Main";
         config = new Config(settingFile);
+        mainClass = config.mainclass;
+        // 需要指定程序入口 因为每个类都可能都main函数
     }
 
     private ClassHierarchy cha;
@@ -100,21 +101,15 @@ public class WalaTest {
 
     private CGNode entry;
 
+    // 获取CG图的入口节点
     public void SetEntry() {
         for (CGNode i : cg.getEntrypointNodes()) {
             if (i != null) {
                 entry = i;
                 break;
             }
-        } // 获取CG图的入口节点
-        // ref = entry.getMethod().getReference();
-        //cfg = entry.getIR().getControlFlowGraph();
-        //bbk = cfg.entry();
-        //DefUse defUse = cache.getDefUse(entry.getIR());
-
+        }
     }
-
-    //private Map<MethodReference, HashSet<Integer>> flag = new HashMap<>();
 
     // 打印每个CGNode的控制流图信息
     public void PrintCG() {
@@ -137,76 +132,110 @@ public class WalaTest {
         return null;
     }
 
-    private void DFS(Stack<CGNode> stnode, Stack<ISSABasicBlock> stbbk) {
-        CGNode node = stnode.peek();
+    private void DFS(Stack<CGNode> stnode, Stack<ISSABasicBlock> stbbk, InfoStack istk) {
         ISSABasicBlock bbk = stbbk.peek();
-        // 获取当前node和basicblock
-
-        String sig = node.getMethod().getSignature();
-        if (sig.startsWith("java")) {
-            //System.out.println("[Standard library] "+sig);
-            stnode.pop();
-            stbbk.pop();
-            nextStep(stnode, stbbk);
-            return; // 不进入系统函数
-            // } else {
-            //     System.out.println(sig);
-        }
+        // 获取当前基本块
+        Info cursdata = istk.Top();
+        // 获取当前污染信息
 
         for (SSAInstruction i : ((SSACFG.BasicBlock) bbk).getAllInstructions()) {
-            System.out.println(String.format("[%d] %s", i.iindex, i.toString()));
+
+            System.out.println(String.format("<%d> %s", i.iindex, i.toString()));
+
             if (i instanceof SSAInvokeInstruction) {
-                /*
-                函数调用时 返回值是唯一的 也就是getReturnValue(0) 如果为-1则没有返回值
-
-                 */
                 SSAInvokeInstruction call = (SSAInvokeInstruction) i;
+                String sig = call.getDeclaredTarget().getSignature();
+                //System.out.println("----"+sig+"----");
+                // 函数调用时 返回值是唯一的 也就是getReturnValue(0) 如果为-1则没有返回值
 
-                System.out.println("CALL " +
-                        call.getCallSite().getDeclaredTarget().getSignature() + " " +
-                        call.getNumberOfUses() + " " +
-                        call.getReturnValue(0));
-                // getuse获取参数
-                // 在这里检查是否是库函数 和source sink点一块检查
+                // 处理系统函数
+                if (config.isSource(sig)) {
+                    System.out.println("[SOURCE] FIND SOURCE FUNCTION");
+                    cursdata.hdsource(call.getReturnValue(0)); // source点返回值总不能是-1吧
+                    continue;
+                } else if (sig.startsWith("java")) {
+                    if (config.isSink(sig)) {
+                        System.out.println("[SINK] FIND SINK FUNCTION");
+                        for (int k = 0; k < call.getNumberOfUses(); k++) {
+                            if (cursdata.reg.contains(call.getUse(k))) {
+                                System.out.printf("!!!!![ALERT] FIND A PATH FROM SOURCE TO SINK [arg:%d]!!!!!\n", call.getUse(k));
+                            }
+                        }
+                    }
+
+                    Vector<Integer> tpv = new Vector<>();
+                    for (int k = 0; k < call.getNumberOfUses(); k++) tpv.add(call.getUse(k));
+                    tpv.add(call.getReturnValue(0));
+
+                    cursdata.ckspr(tpv);
+                    continue;
+                }
 
                 // 其他情况则需要进入函数内部
+                Info newdata = new Info();
+                for (int k = 0; k < call.getNumberOfUses(); k++) newdata.ori.add(call.getUse(k));
+                newdata.ori.add(call.getReturnValue(0));
+                // 把调入参数和返回值的寄存器压入
+
+                newdata.expand(cursdata);
+                // 根据已有数据为栈中加入污染信息
+                //cursdata.PrintInfo();
+                istk.Push(newdata);
+
                 CGNode nnode = findMethod(call.getDeclaredTarget().getSignature()); // 分叉处进行clone
                 ISSABasicBlock nbbk = nnode.getIR().getControlFlowGraph().entry();
                 stnode.push(nnode);
                 stbbk.push(nbbk);
-                DFS(stnode, stbbk);
+                DFS(stnode, stbbk, istk);
                 return;
             } else if (i instanceof SSAReturnInstruction) {
                 SSAReturnInstruction ret = (SSAReturnInstruction) i;
-
-                System.out.println("RETURN " + ret.getUse(0));
+                if (istk.IsLast()) {
+                    System.out.println("[END] finish traverse one path");
+                    System.out.println();
+                    return;
+                }
+                cursdata.writeret(ret.getUse(0));
                 // -1 表示没有返回值
+
+                //cursdata.PrintInfo();
+                istk.Pop();
+                Info cdata = istk.Top();
+                cdata.combine(cursdata);
+                // 根据映射关系把data中的污染信息记录到curdata中
                 stnode.pop();
                 stbbk.pop();
                 if (!stnode.empty()) {
                     // 此时应该跳转到上一层
-                    nextStep(stnode, stbbk);
+                    nextStep(stnode, stbbk, istk);
                 }
                 return;
                 //System.out.println(ret.getUse(0)+" "+bbk.getMethod().getDeclaringClass());
             } else if (i instanceof SSAPutInstruction) {
                 SSAPutInstruction iput = (SSAPutInstruction) i;
                 IField iField = cha.resolveField(iput.getDeclaredField());
-                System.out.println("PUT " + iField + " " + iput.getUse(0) + " " + iput.getUse(1));
-                // 0可能是对象的变化 1是赋值的内容（过程内）
+                if (cursdata.reg.contains(iput.getUse(1))) {
+                    System.out.printf("[PUT OP] from v%d to field %s in v%d\n", iput.getUse(1), iField.toString(), iput.getUse(0));
+                    cursdata.addField(iput.getUse(0), iField);
+                }
+                // 0是当前对象 1是提供复制的寄存器
             } else if (i instanceof SSAGetInstruction) {
                 SSAGetInstruction iget = (SSAGetInstruction) i;
                 IField iField = cha.resolveField(iget.getDeclaredField());
-                System.out.println("GET " + iField + " ");
+                if (cursdata.checkField(iget.getUse(0), iField)) {
+                    cursdata.reg.add(iget.getDef(0));
+                    System.out.printf("[GET] from field %s in v%d to v%d\n", iField.toString(), iget.getUse(0), iget.getDef(0));
+                }
+                // def(0)是赋值对象 use(0)是field来源的寄存器
             } else if (i instanceof SSABinaryOpInstruction) {
                 SSABinaryOpInstruction iop = (SSABinaryOpInstruction) i;
                 System.out.println("OP " + iop.getDef() + " " + iop.getUse(0) + " " + iop.getUse(1));
-            } // 还要处理phi arrayload应该没有必要
+            } // 还要处理phi
         }
-        nextStep(stnode, stbbk);
+        nextStep(stnode, stbbk, istk);
     }
 
-    private void nextStep(Stack<CGNode> stnode, Stack<ISSABasicBlock> stbbk) {
+    private void nextStep(Stack<CGNode> stnode, Stack<ISSABasicBlock> stbbk, InfoStack istk) {
         CGNode node = stnode.peek();
         ISSABasicBlock bbk = stbbk.peek();
         Iterator<ISSABasicBlock> bnext = node.getIR().getControlFlowGraph().getSuccNodes(bbk);
@@ -216,80 +245,29 @@ public class WalaTest {
             Stack<ISSABasicBlock> nstbbk = (Stack<ISSABasicBlock>) stbbk.clone();
             nstbbk.pop();
             nstbbk.push(bnext.next());
-            DFS(nstnode, nstbbk);
+            DFS(nstnode, nstbbk, istk.Copy());
         }
     }
 
-    // private void dfs(MethodReference ref, SSACFG cfg, ISSABasicBlock bbk) {
-    //     int ind = cfg.getNumber(bbk);
-    //
-    //     // 标记已经遍历的基本块
-    //     // if (flag.get(ref) == null) {
-    //     //     HashSet<Integer> h = new HashSet<>();
-    //     //     h.add(ind);
-    //     //     flag.put(ref, h);
-    //     // } else if (!flag.get(ref).contains(ind)) {
-    //     //     flag.get(ref).add(ind);
-    //     // } else {
-    //     //     return;
-    //     // }
-    //     System.out.println("* " + ref.getSignature());
-    //
-    //     if (ref.getSignature().startsWith("java")) {
-    //         System.out.println("- Skip standard library function");
-    //         return;
-    //     }
-    //
-    //     for (SSAInstruction i : ((SSACFG.BasicBlock) bbk).getAllInstructions()) {
-    //         System.out.println(String.format("[%d] %s", i.iindex, i.toString()));
-    //         if (i instanceof SSAInvokeInstruction) {
-    //             SSAInvokeInstruction call = (SSAInvokeInstruction) i;
-    //
-    //             int rets = call.getNumberOfReturnValues();
-    //             int pars = call.getNumberOfPositionalParameters();
-    //
-    //             if (rets == 1) System.out.println("return register:" + call.getDef(0));
-    //             // for(int k=0;k<pars;k++){
-    //             //     Sy
-    //             // }
-    //
-    //             IMethod nmethod = cha.resolveMethod(call.getDeclaredTarget());
-    //             MethodReference nref = nmethod.getReference();
-    //             SSACFG ncfg = cache.getIR(nmethod).getControlFlowGraph();
-    //             //System.out.println(nref.toString());
-    //             dfs(nref, ncfg, ncfg.entry());
-    //         } else if (i instanceof SSAGetInstruction) {
-    //             SSAGetInstruction get = (SSAGetInstruction) i;
-    //
-    //
-    //         }
-    //     }
-    //
-    //     Iterator<ISSABasicBlock> bnext = cfg.getSuccNodes(bbk);
-    //     while (bnext.hasNext()) {
-    //         // 函数内是路径敏感的 不大对啊
-    //         dfs(ref, cfg, bnext.next());
-    //     }
-    // }
-
     public void StartDFS() {
-        // 使用栈才存储函数调用正确的返回路径
         // System.out.println(entry.getIR().getControlFlowGraph());
         Stack<CGNode> stnode = new Stack<>();
         Stack<ISSABasicBlock> stbbk = new Stack<>();
         stnode.push(entry);
         stbbk.push(entry.getIR().getControlFlowGraph().entry());
-        DFS(stnode, stbbk);
+
+        InfoStack istk = new InfoStack();
+        istk.Init();
+        DFS(stnode, stbbk, istk);
     }
 
     public static void main(String[] args) {
         WalaTest w = new WalaTest();
-        //w.ReadConfig();
-        //w.ReadScope();
-        //w.BuildCG();
+        w.ReadScope();
+        w.BuildCG();
         //w.PrintCG();
-        //w.SetEntry();
-        //w.StartDFS();
+        w.SetEntry();
+        w.StartDFS();
         //w.PrintInfo();
     }
 }
