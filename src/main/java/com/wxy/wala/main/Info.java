@@ -9,10 +9,14 @@ public class Info {
 
     public Info Copy() {
         Info ninf = new Info();
-        for (Integer i : reg) ninf.reg.add(i);
-        for (SField sf : fld) ninf.fld.add(sf);
-        for (Integer i : ori) ninf.ori.add(i);
-        for (Integer i : cur) ninf.cur.add(i);
+        ninf.reg.addAll(reg);
+        ninf.fld.addAll(fld);
+        ninf.ori.addAll(ori);
+        ninf.cur.addAll(cur);
+        // for (Integer i : reg) ninf.reg.add(i);
+        // for (SField sf : fld) ninf.fld.add(sf);
+        // for (Integer i : ori) ninf.ori.add(i);
+        // for (Integer i : cur) ninf.cur.add(i);
         return ninf;
     }
 

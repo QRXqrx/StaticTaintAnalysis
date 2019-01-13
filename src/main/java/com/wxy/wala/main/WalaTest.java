@@ -24,15 +24,13 @@ public class WalaTest {
 
     private String scopeFile;
     private String exclusion;
-    private String settingFile;
     private String mainClass;
     private Config config;
 
     public WalaTest() {
         scopeFile = "setting/scope.txt";
         exclusion = "setting/Exclusion.txt";
-        settingFile = "setting/SourceSink.txt";
-        config = new Config(settingFile);
+        config = new Config("setting/SourceSink.txt");
         mainClass = config.mainclass;
         // 需要指定程序入口 因为每个类都可能都main函数
     }
